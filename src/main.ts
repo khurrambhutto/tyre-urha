@@ -75,9 +75,12 @@ let tyreState: TyreState = "free";
 let rollerCharge = 0;
 let releaseSpeed = 0;
 const tyreRadius = 0.62;
+const rollerDrumRadius = 0.18;
 const rollerCenter = new THREE.Vector3(0.2, tyreRadius + 0.22, -2.9);
 const launchDirection = new THREE.Vector3(0, 0, -1);
 const carryOffset = new THREE.Vector3(0, -0.48, -1.55);
+
+let tyreVisualRollAngle = 0;
 
 const materials = {
   dust: new THREE.MeshStandardMaterial({ color: 0xb9965f, roughness: 0.95 }),
@@ -210,6 +213,124 @@ function buildRollerMachine() {
   return { rollerGroup, flywheel };
 }
 
+const wobbleQ = new THREE.Quaternion();
+const wobbleEuler = new THREE.Euler(0, 0, 0, "XYZ");
+
+function getRollerDriveSpin(): number {
+  return tyreState === "loaded" ? THREE.MathUtils.lerp(10, 42, rollerCharge) : 2;
+}
+
+function createRollerSmokeTexture() {
+  const c = document.createElement("canvas");
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, "rgba(255,255,255,0.55)");
+  grd.addColorStop(0.4, "rgba(210,210,210,0.2)");
+  grd.addColorStop(0.75, "rgba(170,170,170,0.08)");
+  grd.addColorStop(1, "rgba(150,150,150,0)");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function buildRollerSmoke() {
+  const count = 90;
+  const positions = new Float32Array(count * 3);
+  const puffs: { life: number; vx: number; vy: number; vz: number }[] = [];
+  for (let i = 0; i < count; i += 1) puffs.push({ life: 0, vx: 0, vy: 0, vz: 0 });
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+
+  const smTex = createRollerSmokeTexture();
+  const material = new THREE.PointsMaterial({
+    size: 0.5,
+    map: smTex ?? undefined,
+    alphaMap: smTex ?? undefined,
+    transparent: true,
+    depthWrite: false,
+    opacity: 0.72,
+    color: 0xbfb8b0,
+    sizeAttenuation: true,
+  });
+
+  const points = new THREE.Points(geometry, material);
+  points.frustumCulled = false;
+  scene.add(points);
+
+  const origin = new THREE.Vector3();
+  const scratch = new THREE.Vector3();
+  let acc = 0;
+
+  const spawn = (i: number, charge: number, mesh: THREE.Group) => {
+    const speedFactor = Math.pow(Math.max(0, charge), 1.1);
+    scratch.set(0, -tyreRadius * 0.58, 0.08);
+    scratch.applyQuaternion(mesh.quaternion);
+    origin.copy(mesh.position).add(scratch);
+    origin.x += (Math.random() - 0.5) * (0.1 + 0.12 * speedFactor);
+    origin.z += (Math.random() - 0.5) * (0.16 + 0.12 * speedFactor);
+    const i3 = i * 3;
+    const f = 0.45 + speedFactor;
+    positions[i3] = origin.x;
+    positions[i3 + 1] = origin.y + Math.random() * 0.04;
+    positions[i3 + 2] = origin.z;
+    puffs[i] = {
+      life: 0.45 + 0.65 * f * (0.35 + Math.random()),
+      vx: (Math.random() - 0.5) * (0.15 + 0.35 * speedFactor),
+      vy: 0.38 + 0.85 * f * (0.4 + Math.random() * 0.6),
+      vz: 0.05 + 0.55 * f * (0.25 + Math.random() * 0.75),
+    };
+  };
+
+  return {
+    points,
+    update(dt: number, charge: number, active: boolean, mesh: THREE.Group) {
+      const speedFactor = Math.pow(Math.max(0, charge), 1.1);
+      material.size = 0.32 + 0.58 * (0.15 + 0.85 * speedFactor);
+      material.opacity = 0.28 + 0.5 * (0.2 + 0.8 * speedFactor);
+
+      if (active) {
+        acc += (1.2 + 38 * speedFactor) * dt;
+        while (acc >= 1) {
+          acc -= 1;
+          for (let i = 0; i < count; i += 1) {
+            if (puffs[i].life <= 0) {
+              spawn(i, charge, mesh);
+              break;
+            }
+          }
+        }
+      } else {
+        acc = 0;
+      }
+
+      for (let i = 0; i < count; i += 1) {
+        const p = puffs[i];
+        const i3 = i * 3;
+        if (p.life > 0) {
+          p.life -= dt;
+          positions[i3] += p.vx * dt;
+          positions[i3 + 1] += p.vy * dt;
+          positions[i3 + 2] += p.vz * dt;
+          p.vy += 0.28 * dt;
+          p.vx *= 1 - 0.85 * dt;
+          p.vz *= 1 - 0.4 * dt;
+        } else {
+          positions[i3 + 1] = -200;
+        }
+      }
+
+      const attr = geometry.attributes.position as THREE.BufferAttribute;
+      attr.needsUpdate = true;
+    },
+  };
+}
+
 function createTyre() {
   const tyre = new THREE.Group();
   const torus = new THREE.Mesh(new THREE.TorusGeometry(tyreRadius, 0.16, 18, 72), materials.rubber);
@@ -256,6 +377,7 @@ buildScene();
 buildJumpObstacles();
 const machine = buildRollerMachine();
 const tyre = createTyre();
+const rollerSmoke = buildRollerSmoke();
 
 function updateCameraFromMouse(event: MouseEvent) {
   if (!event.ctrlKey) return;
@@ -304,6 +426,7 @@ function carryTyre() {
 function loadTyre() {
   setTyreKinematic();
   tyreState = "loaded";
+  tyreVisualRollAngle = 0;
   tyre.body.position.copy(new CANNON.Vec3(rollerCenter.x, rollerCenter.y, rollerCenter.z));
   tyre.body.quaternion.setFromEuler(0, 0, 0);
   statusEl.textContent = "Tyre is accelerating in the rollers";
@@ -387,9 +510,11 @@ function updateTyre(dt: number) {
 
   if (tyreState === "loaded") {
     rollerCharge = Math.min(1, rollerCharge + dt * 0.22);
-    const spin = THREE.MathUtils.lerp(14, 48, rollerCharge);
+    const drive = getRollerDriveSpin();
+    const tyreOmega = (drive * rollerDrumRadius) / tyreRadius;
+    tyreVisualRollAngle += tyreOmega * dt;
     tyre.body.position.copy(new CANNON.Vec3(rollerCenter.x, rollerCenter.y, rollerCenter.z));
-    tyre.body.quaternion.setFromEuler(clock.elapsedTime * spin, 0, 0);
+    tyre.body.quaternion.setFromEuler(tyreVisualRollAngle, 0, 0);
     releaseButton.disabled = rollerCharge < 0.18;
   } else {
     releaseButton.disabled = true;
@@ -397,6 +522,21 @@ function updateTyre(dt: number) {
 
   tyre.mesh.position.copy(tyre.body.position as unknown as THREE.Vector3);
   tyre.mesh.quaternion.copy(tyre.body.quaternion as unknown as THREE.Quaternion);
+
+  if (tyreState === "loaded") {
+    const t = clock.elapsedTime;
+    const c = rollerCharge;
+    tyre.mesh.position.x += 0.02 * Math.sin(t * 35) * (0.45 + c);
+    tyre.mesh.position.z += 0.016 * Math.sin(t * 28 + 1.1) * (0.45 + c);
+    tyre.mesh.position.y += 0.007 * Math.sin(t * 46) * (0.35 + c);
+    wobbleEuler.set(
+      0.02 * (0.45 + c) * Math.sin(t * 41),
+      0.01 * (0.4 + c) * Math.sin(t * 32 + 0.2),
+      0.04 * c * Math.sin(t * 51 + 0.3),
+    );
+    wobbleQ.setFromEuler(wobbleEuler);
+    tyre.mesh.quaternion.multiply(wobbleQ);
+  }
 }
 
 function updateHud() {
@@ -410,7 +550,7 @@ function updateHud() {
 }
 
 function animateMachine(dt: number) {
-  const spin = tyreState === "loaded" ? THREE.MathUtils.lerp(10, 42, rollerCharge) : 2;
+  const spin = getRollerDriveSpin();
   machine.rollerGroup.children.forEach((roller) => {
     roller.rotation.x += spin * dt;
   });
@@ -426,6 +566,7 @@ function loop() {
   if (tyreState !== "carried" && tyreState !== "loaded") world.step(1 / 60, dt, 3);
   resetTyreIfLost();
   animateMachine(dt);
+  rollerSmoke.update(dt, rollerCharge, tyreState === "loaded", tyre.mesh);
   updateHud();
   renderer.render(scene, camera);
 }
