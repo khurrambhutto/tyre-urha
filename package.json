@@ -1,0 +1,19 @@
+{
+  "name": "tyre-urha",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite --host 0.0.0.0",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "three": "latest",
+    "cannon-es": "latest"
+  },
+  "devDependencies": {}
+}

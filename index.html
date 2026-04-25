@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tyre Roller Launch</title>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div class="hud">
+      <div class="brand">
+        <span>Tyre Roller Launch</span>
+        <strong id="status">Pick up the tyre</strong>
+      </div>
+      <div class="meter">
+        <span>Roller speed</span>
+        <div class="bar"><i id="speedBar"></i></div>
+        <b id="speedText">0%</b>
+      </div>
+      <div class="controls">
+        <kbd>WASD</kbd> Move
+        <kbd>Ctrl</kbd> + mouse Look
+        <kbd>E</kbd> Pick / place tyre
+        <button id="releaseButton" type="button" disabled>Release tyre</button>
+      </div>
+    </div>
+    <div class="crosshair" aria-hidden="true"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
