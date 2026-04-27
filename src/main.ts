@@ -79,6 +79,9 @@ const rollerDrumRadius = 0.18;
 const rollerCenter = new THREE.Vector3(0.2, tyreRadius + 0.22, -2.9);
 const launchDirection = new THREE.Vector3(0, 0, -1);
 const carryOffset = new THREE.Vector3(0, -0.48, -1.55);
+let towerHit = false;
+let launchedRestTime = 0;
+let goalResetTimer = 0;
 
 let tyreVisualRollAngle = 0;
 
@@ -93,6 +96,9 @@ const materials = {
   rubber: new THREE.MeshStandardMaterial({ color: 0x0d0f0f, roughness: 0.72 }),
   rubberSide: new THREE.MeshStandardMaterial({ color: 0x252929, roughness: 0.88 }),
   accent: new THREE.MeshStandardMaterial({ color: 0xffae33, roughness: 0.5, emissive: 0x4d2500 }),
+  wood: new THREE.MeshStandardMaterial({ color: 0x6b4526, roughness: 0.84 }),
+  tower: new THREE.MeshStandardMaterial({ color: 0xb77f55, roughness: 0.96 }),
+  towerTop: new THREE.MeshStandardMaterial({ color: 0x6f4b36, roughness: 0.92 }),
 };
 
 function addBox(
@@ -122,19 +128,77 @@ function addPhysicsBox(
   body.position.set(...position);
   body.quaternion.setFromEuler(...rotation);
   world.addBody(body);
-  return mesh;
+  return { mesh, body };
 }
 
-function buildJumpObstacles() {
-  const rampMaterial = new THREE.MeshStandardMaterial({ color: 0x8b6538, roughness: 0.88 });
-  const blockMaterial = new THREE.MeshStandardMaterial({ color: 0x5d4127, roughness: 0.92 });
+function addPhysicsCylinder(
+  radii: [number, number],
+  height: number,
+  position: [number, number, number],
+  material: THREE.Material,
+) {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radii[0], radii[1], height, 36), material);
+  mesh.position.set(...position);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
 
-  addPhysicsBox([2.35, 0.32, 2.25], [0.05, 0.24, -10.4], rampMaterial, [0.22, 0, 0]);
-  addPhysicsBox([1.7, 0.24, 1.45], [-1.35, 0.2, -17.2], rampMaterial, [0.32, 0.08, 0]);
-  addPhysicsBox([1.55, 0.24, 1.5], [1.25, 0.2, -22.5], rampMaterial, [0.3, -0.12, 0]);
+  const body = new CANNON.Body({ mass: 0, material: dustMaterial });
+  const shape = new CANNON.Cylinder(radii[0], radii[1], height, 36);
+  const shapeOrientation = new CANNON.Quaternion();
+  shapeOrientation.setFromEuler(Math.PI / 2, 0, 0);
+  body.addShape(shape, new CANNON.Vec3(), shapeOrientation);
+  body.position.set(...position);
+  world.addBody(body);
 
-  addPhysicsBox([0.42, 0.42, 1.9], [1.1, 0.23, -14.2], blockMaterial, [0, 0.35, 0]);
-  addPhysicsBox([0.5, 0.5, 2.2], [-1.0, 0.27, -27.5], blockMaterial, [0, -0.45, 0]);
+  return { mesh, body };
+}
+
+function buildTargetChallenge() {
+  const ladderCenterX = 0;
+  const ladderCenterZ = -19.7;
+  const ladderCenterY = 1.02;
+  const ladderAngle = Math.PI / 6;
+  const ladderLength = 3.6;
+
+  for (const x of [-0.62, 0.62]) {
+    addPhysicsBox(
+      [0.14, 0.12, ladderLength],
+      [ladderCenterX + x, ladderCenterY, ladderCenterZ],
+      materials.wood,
+      [ladderAngle, 0, 0],
+    );
+  }
+
+  for (let i = 0; i < 6; i += 1) {
+    const localZ = 1.25 - i * 0.5;
+    addPhysicsBox(
+      [1.52, 0.105, 0.14],
+      [
+        ladderCenterX,
+        ladderCenterY - Math.sin(ladderAngle) * localZ,
+        ladderCenterZ + Math.cos(ladderAngle) * localZ,
+      ],
+      materials.wood,
+      [ladderAngle, 0, 0],
+    );
+  }
+
+  const towerZ = -31;
+  const tower = addPhysicsCylinder([0.62, 1.28], 8.2, [0, 4.1, towerZ], materials.tower);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.74, 0.66, 0.45, 36), materials.towerTop);
+  cap.position.set(0, 8.42, towerZ);
+  cap.castShadow = true;
+  cap.receiveShadow = true;
+  scene.add(cap);
+
+  const targetBand = new THREE.Mesh(new THREE.TorusGeometry(1.34, 0.035, 10, 64), materials.accent);
+  targetBand.rotation.x = Math.PI / 2;
+  targetBand.position.set(0, 1.3, towerZ);
+  targetBand.castShadow = true;
+  scene.add(targetBand);
+
+  return tower.body;
 }
 
 function buildScene() {
@@ -374,10 +438,17 @@ function createTyre() {
 }
 
 buildScene();
-buildJumpObstacles();
+const towerBody = buildTargetChallenge();
 const machine = buildRollerMachine();
 const tyre = createTyre();
 const rollerSmoke = buildRollerSmoke();
+
+tyre.body.addEventListener("collide", (event: { body: CANNON.Body }) => {
+  if (event.body !== towerBody || towerHit) return;
+  towerHit = true;
+  goalResetTimer = 2.4;
+  statusEl.textContent = "Goal hit: the tyre struck the tower";
+});
 
 function updateCameraFromMouse(event: MouseEvent) {
   if (!event.ctrlKey) return;
@@ -435,6 +506,9 @@ function loadTyre() {
 function releaseTyre() {
   if (tyreState !== "loaded") return;
 
+  towerHit = false;
+  launchedRestTime = 0;
+  goalResetTimer = 0;
   releaseSpeed = THREE.MathUtils.lerp(7, 25, rollerCharge);
   setTyreDynamic();
   tyreState = "launched";
@@ -444,17 +518,38 @@ function releaseTyre() {
   statusEl.textContent = `Released at ${releaseSpeed.toFixed(1)} m/s`;
 }
 
-function resetTyreIfLost() {
+function respawnTyre(message = "Tyre respawned. Pick it up again") {
+  setTyreDynamic();
+  tyreState = "free";
+  towerHit = false;
+  launchedRestTime = 0;
+  goalResetTimer = 0;
+  rollerCharge = 0;
+  releaseSpeed = 0;
+  tyre.body.position.set(-1.2, tyreRadius + 0.08, 1.0);
+  tyre.body.velocity.setZero();
+  tyre.body.angularVelocity.setZero();
+  tyre.body.quaternion.setFromEuler(0, 0, 0);
+  statusEl.textContent = message;
+}
+
+function updateTyreRespawn(dt: number) {
+  if (towerHit) {
+    goalResetTimer -= dt;
+    if (goalResetTimer <= 0) respawnTyre("Goal hit. Tyre respawned for another try");
+    return;
+  }
+
   if (tyre.body.position.y < -5 || tyre.body.position.z < -76 || Math.abs(tyre.body.position.x) > 18) {
-    setTyreDynamic();
-    tyreState = "free";
-    rollerCharge = 0;
-    releaseSpeed = 0;
-    tyre.body.position.set(-1.2, tyreRadius + 0.08, 1.0);
-    tyre.body.velocity.setZero();
-    tyre.body.angularVelocity.setZero();
-    tyre.body.quaternion.setFromEuler(0, 0, 0);
-    statusEl.textContent = "Tyre reset. Pick it up again";
+    respawnTyre("Tyre reset. Pick it up again");
+    return;
+  }
+
+  if (tyreState === "launched" && tyre.body.velocity.length() < 0.8) {
+    launchedRestTime += dt;
+    if (launchedRestTime >= 1.2) respawnTyre("Tyre slowed down. Respawned for another try");
+  } else {
+    launchedRestTime = 0;
   }
 }
 
@@ -544,6 +639,11 @@ function updateHud() {
   speedBar.style.width = `${percent}%`;
   speedText.textContent = `${percent}%`;
 
+  if (towerHit) {
+    statusEl.textContent = "Goal hit: the tyre struck the tower";
+    return;
+  }
+
   if (tyreState === "free") statusEl.textContent = "Walk to tyre and press E";
   if (tyreState === "loaded" && rollerCharge >= 0.18) statusEl.textContent = "Release when the roller speed feels right";
   if (tyreState === "launched" && tyre.body.velocity.length() < 0.8) statusEl.textContent = "Tyre slowed down. Pick it up again";
@@ -564,7 +664,7 @@ function loop() {
   updatePlayer(dt);
   updateTyre(dt);
   if (tyreState !== "carried" && tyreState !== "loaded") world.step(1 / 60, dt, 3);
-  resetTyreIfLost();
+  updateTyreRespawn(dt);
   animateMachine(dt);
   rollerSmoke.update(dt, rollerCharge, tyreState === "loaded", tyre.mesh);
   updateHud();
