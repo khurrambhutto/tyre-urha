@@ -93,6 +93,21 @@ let goalResetTimer = 0;
 
 let tyreVisualRollAngle = 0;
 
+/** Vertical chimney target — keep in sync with `buildTargetChallenge` */
+const TOWER_Z = -31;
+const TOWER_CENTER_Y = 4.1;
+const TOWER_HEIGHT = 8.2;
+const TOWER_HALF_HEIGHT = TOWER_HEIGHT / 2;
+/** Cannon cylinder: radiusTop (+Y) / radiusBottom (-Y) — matches Three mesh */
+const TOWER_RADIUS_TOP = 0.62;
+const TOWER_RADIUS_BOTTOM = 1.28;
+
+function towerHorizRadiusAtWorldY(worldY: number): number {
+  const yRel = worldY - TOWER_CENTER_Y;
+  const t = THREE.MathUtils.clamp((yRel + TOWER_HALF_HEIGHT) / TOWER_HEIGHT, 0, 1);
+  return TOWER_RADIUS_BOTTOM + t * (TOWER_RADIUS_TOP - TOWER_RADIUS_BOTTOM);
+}
+
 const materials = {
   dust: new THREE.MeshStandardMaterial({ color: 0xb9965f, roughness: 0.95 }),
   wall: new THREE.MeshStandardMaterial({ color: 0xc9a06c, roughness: 0.98 }),
@@ -153,9 +168,8 @@ function addPhysicsCylinder(
 
   const body = new CANNON.Body({ mass: 0, material: dustMaterial });
   const shape = new CANNON.Cylinder(radii[0], radii[1], height, 36);
-  const shapeOrientation = new CANNON.Quaternion();
-  shapeOrientation.setFromEuler(Math.PI / 2, 0, 0);
-  body.addShape(shape, new CANNON.Vec3(), shapeOrientation);
+  /** Shape local Y = world Y so the collider is vertical like the mesh (not along Z). */
+  body.addShape(shape);
   body.position.set(...position);
   world.addBody(body);
 
@@ -192,8 +206,8 @@ function buildTargetChallenge() {
     );
   }
 
-  const towerZ = -31;
-  const tower = addPhysicsCylinder([0.62, 1.28], 8.2, [0, 4.1, towerZ], materials.tower);
+  const towerZ = TOWER_Z;
+  const tower = addPhysicsCylinder([TOWER_RADIUS_TOP, TOWER_RADIUS_BOTTOM], TOWER_HEIGHT, [0, TOWER_CENTER_Y, towerZ], materials.tower);
   const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.74, 0.66, 0.45, 36), materials.towerTop);
   cap.position.set(0, 8.42, towerZ);
   cap.castShadow = true;
@@ -202,7 +216,7 @@ function buildTargetChallenge() {
 
   const targetBand = new THREE.Mesh(new THREE.TorusGeometry(1.34, 0.035, 10, 64), materials.accent);
   targetBand.rotation.x = Math.PI / 2;
-  targetBand.position.set(0, 1.3, towerZ);
+  targetBand.position.set(0, 1.3, TOWER_Z);
   targetBand.castShadow = true;
   scene.add(targetBand);
 
@@ -403,6 +417,87 @@ function buildRollerSmoke() {
   };
 }
 
+function buildChimneySmoke(origin: THREE.Vector3) {
+  const count = 80;
+  const positions = new Float32Array(count * 3);
+  const puffs: { life: number; vx: number; vy: number; vz: number }[] = [];
+  for (let i = 0; i < count; i += 1) puffs.push({ life: 0, vx: 0, vy: 0, vz: 0 });
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+
+  const smTex = createRollerSmokeTexture();
+  const material = new THREE.PointsMaterial({
+    size: 0.62,
+    map: smTex ?? undefined,
+    alphaMap: smTex ?? undefined,
+    transparent: true,
+    depthWrite: false,
+    opacity: 0.52,
+    color: 0x7a7672,
+    sizeAttenuation: true,
+  });
+
+  const points = new THREE.Points(geometry, material);
+  points.frustumCulled = false;
+  scene.add(points);
+
+  const spawnOrigin = new THREE.Vector3();
+  let acc = 0;
+
+  const spawn = (i: number) => {
+    spawnOrigin.copy(origin);
+    spawnOrigin.x += (Math.random() - 0.5) * 0.2;
+    spawnOrigin.z += (Math.random() - 0.5) * 0.2;
+    spawnOrigin.y += Math.random() * 0.08;
+    const i3 = i * 3;
+    positions[i3] = spawnOrigin.x;
+    positions[i3 + 1] = spawnOrigin.y;
+    positions[i3 + 2] = spawnOrigin.z;
+    puffs[i] = {
+      life: 1.6 + Math.random() * 2.4,
+      vx: (Math.random() - 0.5) * 0.22,
+      vy: 0.5 + Math.random() * 1.05,
+      vz: (Math.random() - 0.5) * 0.22,
+    };
+  };
+
+  return {
+    points,
+    update(dt: number) {
+      acc += dt * 9;
+      while (acc >= 1) {
+        acc -= 1;
+        for (let i = 0; i < count; i += 1) {
+          if (puffs[i].life <= 0) {
+            spawn(i);
+            break;
+          }
+        }
+      }
+
+      for (let i = 0; i < count; i += 1) {
+        const p = puffs[i];
+        const i3 = i * 3;
+        if (p.life > 0) {
+          p.life -= dt;
+          positions[i3] += p.vx * dt;
+          positions[i3 + 1] += p.vy * dt;
+          positions[i3 + 2] += p.vz * dt;
+          p.vy += 0.1 * dt;
+          p.vx *= 1 - 0.32 * dt;
+          p.vz *= 1 - 0.32 * dt;
+        } else {
+          positions[i3 + 1] = -200;
+        }
+      }
+
+      const attr = geometry.attributes.position as THREE.BufferAttribute;
+      attr.needsUpdate = true;
+    },
+  };
+}
+
 function createTyre() {
   const tyre = new THREE.Group();
   const torus = new THREE.Mesh(new THREE.TorusGeometry(tyreRadius, 0.16, 18, 72), materials.rubber);
@@ -450,13 +545,32 @@ const towerBody = buildTargetChallenge();
 const machine = buildRollerMachine();
 const tyre = createTyre();
 const rollerSmoke = buildRollerSmoke();
+/** Top of chimney stack (main shaft + cap lip) */
+const chimneySmoke = buildChimneySmoke(new THREE.Vector3(0, 8.68, TOWER_Z));
 
-tyre.body.addEventListener("collide", (event: { body: CANNON.Body }) => {
-  if (event.body !== towerBody || towerHit) return;
+function registerTowerHit() {
+  if (towerHit) return;
   towerHit = true;
   goalResetTimer = 2.4;
   statusEl.textContent = "Goal hit: the tyre struck the tower";
+}
+
+tyre.body.addEventListener("collide", (event: { body: CANNON.Body }) => {
+  if (event.body !== towerBody) return;
+  registerTowerHit();
 });
+
+/** Backup if discrete physics steps miss a fast impact parallel to contacts */
+function checkLaunchedTyreTowerOverlap() {
+  if (tyreState !== "launched" || towerHit) return;
+  const p = tyre.body.position;
+  const horiz = Math.hypot(p.x, p.z - TOWER_Z);
+  const r = towerHorizRadiusAtWorldY(p.y) + tyreRadius * 0.92;
+  if (horiz > r) return;
+  const yMin = TOWER_CENTER_Y - TOWER_HALF_HEIGHT - tyreRadius;
+  const yMax = TOWER_CENTER_Y + TOWER_HALF_HEIGHT + 0.55;
+  if (p.y >= yMin && p.y <= yMax) registerTowerHit();
+}
 
 function updateCameraFromMouse(event: MouseEvent) {
   if (!event.ctrlKey) return;
@@ -689,10 +803,15 @@ function loop() {
 
   updatePlayer(dt);
   updateTyre(dt);
-  if (tyreState !== "carried" && tyreState !== "loaded") world.step(1 / 60, dt, 3);
+  if (tyreState !== "carried" && tyreState !== "loaded") {
+    const maxSubSteps = tyreState === "launched" ? 16 : 3;
+    world.step(1 / 60, dt, maxSubSteps);
+    checkLaunchedTyreTowerOverlap();
+  }
   updateTyreRespawn(dt);
   animateMachine(dt);
   rollerSmoke.update(dt, rollerCharge, tyreState === "loaded", tyre.mesh);
+  chimneySmoke.update(dt);
   updateHud();
   renderer.render(scene, camera);
 }
