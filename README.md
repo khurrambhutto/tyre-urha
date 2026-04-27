@@ -2,6 +2,8 @@
 
 A small first-person browser toy: pick up a tyre, load it into the roller machine, charge speed, then release it down the lane. Built with **Three.js** and **cannon-es**.
 
+Live demo: [https://khurrambhutto.github.io/tyre-urha/](https://khurrambhutto.github.io/tyre-urha/)
+
 ## Run
 
 ```bash
