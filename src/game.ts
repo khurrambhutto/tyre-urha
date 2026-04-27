@@ -75,7 +75,16 @@ let rollerCharge = 0;
 let releaseSpeed = 0;
 const tyreRadius = 0.62;
 const rollerDrumRadius = 0.18;
-const rollerCenter = new THREE.Vector3(0.2, tyreRadius + 0.22, -2.9);
+/** Roller cylinder length 2.65 along world X; center at x = 0.2 */
+const ROLLER_AXIS_X = 0.2;
+const ROLLER_HALF_LENGTH = 2.65 / 2;
+/** Keep tyre contact patch on the drum */
+const ROLLER_SLOT_X_MARGIN = 0.28;
+const rollerSlotXMin = ROLLER_AXIS_X - ROLLER_HALF_LENGTH + ROLLER_SLOT_X_MARGIN;
+const rollerSlotXMax = ROLLER_AXIS_X + ROLLER_HALF_LENGTH - ROLLER_SLOT_X_MARGIN;
+const rollerCenter = new THREE.Vector3(ROLLER_AXIS_X, tyreRadius + 0.22, -2.9);
+/** X position along the rollers while loaded / on release (set when placing) */
+let loadedTyreSlotX = ROLLER_AXIS_X;
 const launchDirection = new THREE.Vector3(0, 0, -1);
 const carryOffset = new THREE.Vector3(0, -0.48, -1.55);
 let towerHit = false;
@@ -469,6 +478,23 @@ function cameraRight() {
   return cameraForward(true).cross(new THREE.Vector3(0, 1, 0)).normalize();
 }
 
+/** Where on the roller length the crosshair is pointing (plane z = roller bed). */
+function getAimPlacementOnRollerX(): number {
+  const dir = cameraForward(false);
+  if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1);
+  else dir.normalize();
+
+  let x: number;
+  if (Math.abs(dir.z) < 0.06) {
+    x = player.position.x;
+  } else {
+    const t = (rollerCenter.z - camera.position.z) / dir.z;
+    if (t < 0) x = player.position.x;
+    else x = camera.position.x + t * dir.x;
+  }
+  return THREE.MathUtils.clamp(x, rollerSlotXMin, rollerSlotXMax);
+}
+
 function setTyreKinematic() {
   tyre.body.type = CANNON.Body.KINEMATIC;
   tyre.body.mass = 0;
@@ -497,7 +523,8 @@ function loadTyre() {
   setTyreKinematic();
   tyreState = "loaded";
   tyreVisualRollAngle = 0;
-  tyre.body.position.copy(new CANNON.Vec3(rollerCenter.x, rollerCenter.y, rollerCenter.z));
+  loadedTyreSlotX = getAimPlacementOnRollerX();
+  tyre.body.position.copy(new CANNON.Vec3(loadedTyreSlotX, rollerCenter.y, rollerCenter.z));
   tyre.body.quaternion.setFromEuler(0, 0, 0);
   statusEl.textContent = "Tyre is accelerating in the rollers";
 }
@@ -511,7 +538,7 @@ function releaseTyre() {
   releaseSpeed = THREE.MathUtils.lerp(7, 25, rollerCharge);
   setTyreDynamic();
   tyreState = "launched";
-  tyre.body.position.set(rollerCenter.x, rollerCenter.y, rollerCenter.z - 0.72);
+  tyre.body.position.set(loadedTyreSlotX, rollerCenter.y, rollerCenter.z - 0.72);
   tyre.body.velocity.set(launchDirection.x * releaseSpeed, 0.2, launchDirection.z * releaseSpeed);
   tyre.body.angularVelocity.set(-releaseSpeed / tyreRadius, 0, 0);
   statusEl.textContent = `Released at ${releaseSpeed.toFixed(1)} m/s`;
@@ -607,7 +634,7 @@ function updateTyre(dt: number) {
     const drive = getRollerDriveSpin();
     const tyreOmega = (drive * rollerDrumRadius) / tyreRadius;
     tyreVisualRollAngle += tyreOmega * dt;
-    tyre.body.position.copy(new CANNON.Vec3(rollerCenter.x, rollerCenter.y, rollerCenter.z));
+    tyre.body.position.copy(new CANNON.Vec3(loadedTyreSlotX, rollerCenter.y, rollerCenter.z));
     tyre.body.quaternion.setFromEuler(tyreVisualRollAngle, 0, 0);
     releaseButton.disabled = rollerCharge < 0.18;
   } else {
